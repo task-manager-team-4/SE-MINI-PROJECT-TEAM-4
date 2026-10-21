@@ -1,46 +1,87 @@
-
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 
-const sampleTasks = [
-  {
-    id: 1,
-    title: 'Complete project documentation',
-    description: 'Review the SRS and SAD documents.',
-    priority: 'High',
-    status: 'In Progress',
-    dueDate: '2026-10-22',
-    owner: 'You',
-  },
-  {
-    id: 2,
-    title: 'Review frontend implementation',
-    description: 'Check the task manager interface.',
-    priority: 'Medium',
-    status: 'Pending',
-    dueDate: '2026-10-24',
-    owner: 'You',
-  },
-  {
-    id: 3,
-    title: 'Prepare Sprint 1 demo',
-    description: 'Verify the main task management workflow.',
-    priority: 'Low',
-    status: 'Pending',
-    dueDate: '2026-10-23',
-    owner: 'You',
-  },
-]
+const API = 'http://localhost:5000/api'
 
 function App() {
-  const [tasks] = useState(sampleTasks)
+  const [token, setToken] = useState(() => localStorage.getItem('taskToken') || '')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [tasks, setTasks] = useState([])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+
+  async function login(event) {
+    event.preventDefault()
+    setError('')
+    setMessage('')
+    setLoading(true)
+
+    try {
+      const response = await fetch(`${API}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || data.message || 'Login failed.')
+
+      if (!data.token) throw new Error('The server did not return a login token.')
+
+      localStorage.setItem('taskToken', data.token)
+      setToken(data.token)
+      setPassword('')
+      setMessage('Login successful.')
+    } catch (err) {
+      setError(err.message || 'Could not connect to the server.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function loadTasks(currentToken) {
+    setLoading(true)
+    setError('')
+
+    try {
+      const response = await fetch(`${API}/tasks`, {
+        headers: { Authorization: `Bearer ${currentToken}` },
+      })
+
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Could not load tasks.')
+
+      setTasks(Array.isArray(data.tasks) ? data.tasks : [])
+    } catch (err) {
+      setError(err.message || 'Could not connect to the server.')
+      if (err.message?.toLowerCase().includes('token')) logout()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem('taskToken')
+    setToken('')
+    setTasks([])
+    setPassword('')
+    setMessage('')
+    setError('')
+  }
+
+  useEffect(() => {
+    if (token) loadTasks(token)
+  }, [token])
 
   const visibleTasks = tasks.filter((task) => {
+    const query = search.toLowerCase()
     const matchesSearch =
-      task.title.toLowerCase().includes(search.toLowerCase()) ||
-      task.description.toLowerCase().includes(search.toLowerCase())
+      (task.title || '').toLowerCase().includes(query) ||
+      (task.description || '').toLowerCase().includes(query)
 
     const matchesStatus =
       statusFilter === 'All' || task.status === statusFilter
@@ -48,18 +89,75 @@ function App() {
     return matchesSearch && matchesStatus
   })
 
+  if (!token) {
+    return (
+      <main className="task-page">
+        <header className="task-header">
+          <div>
+            <p className="eyebrow">TEAM 4 · TASK MANAGER</p>
+            <h1>Welcome back</h1>
+            <p className="subtitle">Log in to view your authorized tasks.</p>
+          </div>
+        </header>
+
+        <section className="task-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Login</h2>
+              <p>Use an account registered with the Task Manager API.</p>
+            </div>
+          </div>
+
+          <form onSubmit={login} className="login-form">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="you@example.com"
+              autoComplete="username"
+              required
+            />
+
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Enter your password"
+              autoComplete="current-password"
+              required
+            />
+
+            {error && <p className="error-message">{error}</p>}
+            {message && <p className="success-message">{message}</p>}
+
+            <button type="submit" disabled={loading}>
+              {loading ? 'Logging in...' : 'Log in'}
+            </button>
+          </form>
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main className="task-page">
       <header className="task-header">
         <div>
           <p className="eyebrow">TEAM 4 · TASK MANAGER</p>
           <h1>My Tasks</h1>
-          <p className="subtitle">
-            View and keep track of the tasks available to you.
-          </p>
+          <p className="subtitle">View and keep track of your authorized tasks.</p>
         </div>
-        <span className="user-label">Demo User</span>
+        <button type="button" className="logout-button" onClick={logout}>
+          Log out
+        </button>
       </header>
+
+      {error && <p className="error-message">{error}</p>}
+      
 
       <section className="task-summary">
         <div className="summary-card">
@@ -68,15 +166,11 @@ function App() {
         </div>
         <div className="summary-card">
           <span>In progress</span>
-          <strong>
-            {tasks.filter((task) => task.status === 'In Progress').length}
-          </strong>
+          <strong>{tasks.filter((task) => task.status === 'In Progress').length}</strong>
         </div>
         <div className="summary-card">
           <span>Pending</span>
-          <strong>
-            {tasks.filter((task) => task.status === 'Pending').length}
-          </strong>
+          <strong>{tasks.filter((task) => task.status === 'Pending').length}</strong>
         </div>
       </section>
 
@@ -84,11 +178,9 @@ function App() {
         <div className="panel-heading">
           <div>
             <h2>Task list</h2>
-            <p>Tasks displayed in this prototype</p>
+            <p>Tasks retrieved from your account</p>
           </div>
-          <span className="task-count">
-            {visibleTasks.length} tasks
-          </span>
+          <span className="task-count">{visibleTasks.length} tasks</span>
         </div>
 
         <div className="task-controls">
@@ -110,47 +202,50 @@ function App() {
             <option value="In Progress">In Progress</option>
             <option value="Completed">Completed</option>
           </select>
+
+          <button type="button" onClick={() => loadTasks(token)} disabled={loading}>
+            Refresh
+          </button>
         </div>
 
-        {visibleTasks.length > 0 ? (
+        {loading ? (
+          <p className="empty-state">Loading tasks...</p>
+        ) : visibleTasks.length > 0 ? (
           <div className="task-list">
             {visibleTasks.map((task) => (
               <article className="task-card" key={task.id}>
                 <div className="task-card-top">
                   <div>
                     <h3>{task.title}</h3>
-                    <p>{task.description}</p>
+                    <p>{task.description || 'No description provided.'}</p>
                   </div>
-                  <span
-                    className={`priority priority-${task.priority.toLowerCase()}`}
-                  >
-                    {task.priority}
+                  <span className={`priority priority-${(task.priority || 'Medium').toLowerCase()}`}>
+                    {task.priority || 'Medium'}
                   </span>
                 </div>
 
                 <div className="task-meta">
+                  <span><strong>Status:</strong> {task.status}</span>
                   <span>
-                    <strong>Status:</strong> {task.status}
+                    <strong>Due:</strong>{' '}
+                    {task.deadline ? new Date(task.deadline).toLocaleDateString() : 'Not set'}
                   </span>
-                  <span>
-                    <strong>Due:</strong> {task.dueDate}
-                  </span>
-                  <span>
-                    <strong>Assigned to:</strong> {task.owner}
-                  </span>
+                  <span><strong>Task ID:</strong> {task.id}</span>
                 </div>
               </article>
             ))}
           </div>
         ) : (
           <p className="empty-state">
-            No tasks match your search or selected status.
+            {tasks.length === 0
+              ? 'You have no tasks yet.'
+              : 'No tasks match your search or selected status.'}
           </p>
         )}
       </section>
 
       <footer className="task-footer">
-        Prototype for Issue #4 — View Authorized Tasks
+        Team 4 — Issue #4: View Authorized Tasks
       </footer>
     </main>
   )
