@@ -375,3 +375,22 @@ select:focus-visible {
     gap: 7px;
   }
 }
+.auth-switch {
+  margin-top: 20px;
+  color: #a1a1aa;
+  text-align: center;
+}
+
+.auth-switch-button {
+  padding: 4px 6px;
+  color: #a5b4fc;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.auth-switch-button:hover {
+  color: #c7d2fe;
+  text-decoration: underline;
+}
