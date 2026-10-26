@@ -1,4 +1,3 @@
-
 import { Router } from 'express';
 import pool from '../db.js';
 import authenticateToken from '../middleware/auth.js';
@@ -169,6 +168,38 @@ router.put('/:id/status', async (req, res) => {
     });
   } catch (error) {
     console.error('Update status error:', error.message);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// Delete a task (FR-06)
+router.delete('/:id', async (req, res) => {
+  try {
+    const taskId = Number(req.params.id);
+
+    // Validate task ID
+    if (!Number.isInteger(taskId) || taskId < 1) {
+      return res.status(400).json({ error: 'Invalid task ID.' });
+    }
+
+    // Delete only a task belonging to the logged-in user
+    const result = await pool.query(
+      `DELETE FROM tasks
+       WHERE id = $1 AND user_id = $2
+       RETURNING id`,
+      [taskId, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Task not found.' });
+    }
+
+    return res.json({
+      message: 'Task deleted successfully.',
+      taskId: result.rows[0].id,
+    });
+  } catch (error) {
+    console.error('Delete task error:', error.message);
     return res.status(500).json({ error: 'Internal server error.' });
   }
 });
