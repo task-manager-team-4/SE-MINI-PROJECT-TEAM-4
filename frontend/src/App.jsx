@@ -12,7 +12,12 @@ function App() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isRegistering, setIsRegistering] = useState(false)
+
   const [tasks, setTasks] = useState([])
+  const [users, setUsers] = useState([])
+  const [selectedAssignees, setSelectedAssignees] = useState({})
+  const [assigningTaskId, setAssigningTaskId] = useState(null)
+
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [loading, setLoading] = useState(false)
@@ -38,6 +43,7 @@ function App() {
   // FR-06: Delete task state
   const [deletingTaskId, setDeletingTaskId] = useState(null)
 
+  // Login
   async function login(event) {
     event.preventDefault()
     setError('')
@@ -50,6 +56,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       })
+
       const data = await response.json()
 
       if (!response.ok) {
@@ -71,6 +78,7 @@ function App() {
     }
   }
 
+  // Register
   async function register(event) {
     event.preventDefault()
     setError('')
@@ -89,10 +97,13 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       })
+
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || data.message || 'Registration failed.')
+        throw new Error(
+          data.error || data.message || 'Registration failed.',
+        )
       }
 
       setIsRegistering(false)
@@ -107,6 +118,32 @@ function App() {
     }
   }
 
+  // FR-07: Load registered users for assignment dropdown
+  async function loadUsers(currentToken = token) {
+    if (!currentToken) return
+
+    try {
+      const response = await fetch(`${API}/tasks/users`, {
+        headers: {
+          Authorization: `Bearer ${currentToken}`,
+        },
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || data.message || 'Could not load users.',
+        )
+      }
+
+      setUsers(Array.isArray(data.users) ? data.users : [])
+    } catch (err) {
+      setError(err.message || 'Could not load registered users.')
+    }
+  }
+
+  // Load tasks belonging to the logged-in user
   async function loadTasks(currentToken = token) {
     if (!currentToken) return
 
@@ -115,17 +152,24 @@ function App() {
 
     try {
       const response = await fetch(`${API}/tasks`, {
-        headers: { Authorization: `Bearer ${currentToken}` },
+        headers: {
+          Authorization: `Bearer ${currentToken}`,
+        },
       })
+
       const data = await response.json()
 
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
           logout()
-          throw new Error('Your session has expired. Please log in again.')
+          throw new Error(
+            'Your session has expired. Please log in again.',
+          )
         }
 
-        throw new Error(data.error || data.message || 'Could not load tasks.')
+        throw new Error(
+          data.error || data.message || 'Could not load tasks.',
+        )
       }
 
       setTasks(Array.isArray(data.tasks) ? data.tasks : [])
@@ -136,6 +180,7 @@ function App() {
     }
   }
 
+  // Create a task
   async function createTask(event) {
     event.preventDefault()
     setError('')
@@ -162,10 +207,13 @@ function App() {
           deadline: newDeadline || null,
         }),
       })
+
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || data.message || 'Could not create task.')
+        throw new Error(
+          data.error || data.message || 'Could not create task.',
+        )
       }
 
       setNewTitle('')
@@ -173,6 +221,7 @@ function App() {
       setNewPriority('Medium')
       setNewDeadline('')
       setMessage(data.message || 'Task created successfully!')
+
       await loadTasks(token)
     } catch (err) {
       setError(err.message || 'Could not create task.')
@@ -181,7 +230,7 @@ function App() {
     }
   }
 
-  // FR-05: Open the edit form with the task's existing values
+  // FR-05: Open edit form
   function startEditingTask(task) {
     setError('')
     setMessage('')
@@ -196,13 +245,14 @@ function App() {
       const localDate = new Date(
         date.getTime() - date.getTimezoneOffset() * 60000,
       )
+
       setEditDeadline(localDate.toISOString().slice(0, 16))
     } else {
       setEditDeadline('')
     }
   }
 
-  // FR-05: Save the edited task through the authenticated API
+  // FR-05: Save edited task
   async function saveEditedTask(event) {
     event.preventDefault()
     setError('')
@@ -258,6 +308,7 @@ function App() {
 
       setEditingTaskId(null)
       setMessage(data.message || 'Task updated successfully!')
+
       await loadTasks(token)
     } catch (err) {
       setError(err.message || 'Could not update task.')
@@ -277,7 +328,7 @@ function App() {
     setMessage('')
   }
 
-  // FR-06: Delete a task after confirmation
+  // FR-06: Delete task after confirmation
   async function deleteTask(task) {
     const confirmed = window.confirm(
       `Are you sure you want to delete "${task.title}"? This action cannot be undone.`,
@@ -300,7 +351,9 @@ function App() {
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || data.message || 'Could not delete task.')
+        throw new Error(
+          data.error || data.message || 'Could not delete task.',
+        )
       }
 
       if (editingTaskId === task.id) {
@@ -308,7 +361,9 @@ function App() {
       }
 
       setTasks((currentTasks) =>
-        currentTasks.filter((currentTask) => currentTask.id !== task.id),
+        currentTasks.filter(
+          (currentTask) => currentTask.id !== task.id,
+        ),
       )
 
       setMessage(data.message || 'Task deleted successfully.')
@@ -319,30 +374,97 @@ function App() {
     }
   }
 
-  // Update a task's status
+  // FR-07: Assign task to a registered user
+  async function assignTask(task) {
+    const selectedValue =
+      selectedAssignees[task.id] ??
+      String(task.assignee_id ?? '')
+
+    const assigneeId = Number(selectedValue)
+
+    if (
+      !selectedValue ||
+      !Number.isInteger(assigneeId) ||
+      assigneeId < 1
+    ) {
+      setError('Please select a registered user to assign this task.')
+      return
+    }
+
+    setError('')
+    setMessage('')
+    setAssigningTaskId(task.id)
+
+    try {
+      const response = await fetch(
+        `${API}/tasks/${task.id}/assign`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ assigneeId }),
+        },
+      )
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || data.message || 'Could not assign task.',
+        )
+      }
+
+      setTasks((currentTasks) =>
+        currentTasks.map((currentTask) =>
+          currentTask.id === task.id
+            ? { ...currentTask, ...data.task }
+            : currentTask,
+        ),
+      )
+
+      setMessage(data.message || 'Task assigned successfully.')
+    } catch (err) {
+      setError(err.message || 'Could not assign task.')
+    } finally {
+      setAssigningTaskId(null)
+    }
+  }
+
+  // Update task status
   async function updateTaskStatus(taskId, status) {
     setError('')
     setMessage('')
     setUpdatingTaskId(taskId)
 
     try {
-      const response = await fetch(`${API}/tasks/${taskId}/status`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+      const response = await fetch(
+        `${API}/tasks/${taskId}/status`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ status }),
         },
-        body: JSON.stringify({ status }),
-      })
+      )
+
       const data = await response.json()
 
       if (!response.ok) {
         throw new Error(
-          data.error || data.message || 'Could not update task status.',
+          data.error ||
+            data.message ||
+            'Could not update task status.',
         )
       }
 
-      setMessage(data.message || 'Task status updated successfully!')
+      setMessage(
+        data.message || 'Task status updated successfully!',
+      )
+
       await loadTasks(token)
     } catch (err) {
       setError(err.message || 'Could not update task status.')
@@ -351,10 +473,13 @@ function App() {
     }
   }
 
+  // Log out
   function logout() {
     localStorage.removeItem('taskToken')
     setToken('')
     setTasks([])
+    setUsers([])
+    setSelectedAssignees({})
     setPassword('')
     setMessage('')
     setError('')
@@ -366,29 +491,39 @@ function App() {
   useEffect(() => {
     if (token) {
       loadTasks(token)
+      loadUsers(token)
     }
+
     // loadTasks is intentionally called when the authentication token changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
+  // Search and filter tasks
   const visibleTasks = tasks.filter((task) => {
     const query = search.toLowerCase()
+
     const matchesSearch =
       (task.title || '').toLowerCase().includes(query) ||
       (task.description || '').toLowerCase().includes(query)
+
     const matchesStatus =
       statusFilter === 'All' || task.status === statusFilter
 
     return matchesSearch && matchesStatus
   })
 
+  // Login and registration page
   if (!token) {
     return (
       <main className="task-page">
         <header className="task-header">
           <div>
             <p className="eyebrow">TEAM 4 · TASK MANAGER</p>
-            <h1>{isRegistering ? 'Create your account' : 'Welcome back'}</h1>
+
+            <h1>
+              {isRegistering ? 'Create your account' : 'Welcome back'}
+            </h1>
+
             <p className="subtitle">
               {isRegistering
                 ? 'Register to start managing your tasks.'
@@ -401,6 +536,7 @@ function App() {
           <div className="panel-heading">
             <div>
               <h2>{isRegistering ? 'Create Account' : 'Login'}</h2>
+
               <p>
                 {isRegistering
                   ? 'Enter your email and create a password.'
@@ -414,6 +550,7 @@ function App() {
             className="login-form"
           >
             <label htmlFor="email">Email</label>
+
             <input
               id="email"
               type="email"
@@ -425,21 +562,31 @@ function App() {
             />
 
             <label htmlFor="password">Password</label>
+
             <input
               id="password"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder={
-                isRegistering ? 'At least 8 characters' : 'Enter your password'
+                isRegistering
+                  ? 'At least 8 characters'
+                  : 'Enter your password'
               }
-              autoComplete={isRegistering ? 'new-password' : 'current-password'}
+              autoComplete={
+                isRegistering ? 'new-password' : 'current-password'
+              }
               minLength={isRegistering ? 8 : undefined}
               required
             />
 
-            {error && <p className="error-message">{error}</p>}
-            {message && <p className="success-message">{message}</p>}
+            {error && (
+              <p className="error-message">{error}</p>
+            )}
+
+            {message && (
+              <p className="success-message">{message}</p>
+            )}
 
             <button type="submit" disabled={loading}>
               {loading
@@ -453,7 +600,10 @@ function App() {
           </form>
 
           <p className="auth-switch">
-            {isRegistering ? 'Already have an account?' : 'New here?'}{' '}
+            {isRegistering
+              ? 'Already have an account?'
+              : 'New here?'}{' '}
+
             <button
               type="button"
               className="auth-switch-button"
@@ -469,49 +619,69 @@ function App() {
           </p>
         </section>
 
-        <footer className="task-footer">Team 4 — Task Manager Application</footer>
+        <footer className="task-footer">
+          Team 4 — Task Manager Application
+        </footer>
       </main>
     )
   }
 
+  // Main task manager page
   return (
     <main className="task-page">
       <header className="task-header">
         <div>
           <p className="eyebrow">TEAM 4 · TASK MANAGER</p>
           <h1>My Tasks</h1>
+
           <p className="subtitle">
             View and keep track of the tasks available to you.
           </p>
         </div>
 
-        <button type="button" className="logout-button" onClick={logout}>
+        <button
+          type="button"
+          className="logout-button"
+          onClick={logout}
+        >
           Log out
         </button>
       </header>
 
-      {error && <p className="error-message">{error}</p>}
-      {message && <p className="success-message">{message}</p>}
+      {error && (
+        <p className="error-message">{error}</p>
+      )}
+
+      {message && (
+        <p className="success-message">{message}</p>
+      )}
 
       <section className="task-summary">
         <div className="summary-card">
           <span>Total tasks</span>
           <strong>{tasks.length}</strong>
         </div>
+
         <div className="summary-card">
           <span>In progress</span>
           <strong>
-            {tasks.filter((task) => task.status === 'In Progress').length}
+            {tasks.filter(
+              (task) => task.status === 'In Progress',
+            ).length}
           </strong>
         </div>
+
         <div className="summary-card">
           <span>Pending</span>
           <strong>
-            {tasks.filter((task) => task.status === 'Pending').length}
+            {tasks.filter(
+              (task) => task.status === 'Pending',
+            ).length}
           </strong>
         </div>
       </section>
 
+      {/* Create task */}
       <section className="task-panel">
         <div className="panel-heading">
           <div>
@@ -520,13 +690,18 @@ function App() {
           </div>
         </div>
 
-        <form className="create-task-form" onSubmit={createTask}>
+        <form
+          className="create-task-form"
+          onSubmit={createTask}
+        >
           <label>
             Task title *
             <input
               type="text"
               value={newTitle}
-              onChange={(event) => setNewTitle(event.target.value)}
+              onChange={(event) =>
+                setNewTitle(event.target.value)
+              }
               maxLength={200}
               placeholder="Enter task title"
               required
@@ -537,7 +712,9 @@ function App() {
             Priority
             <select
               value={newPriority}
-              onChange={(event) => setNewPriority(event.target.value)}
+              onChange={(event) =>
+                setNewPriority(event.target.value)
+              }
             >
               {TASK_PRIORITIES.map((priority) => (
                 <option key={priority} value={priority}>
@@ -551,7 +728,9 @@ function App() {
             Description
             <textarea
               value={newDescription}
-              onChange={(event) => setNewDescription(event.target.value)}
+              onChange={(event) =>
+                setNewDescription(event.target.value)
+              }
               placeholder="Describe your task (optional)"
             />
           </label>
@@ -561,25 +740,34 @@ function App() {
             <input
               type="datetime-local"
               value={newDeadline}
-              onChange={(event) => setNewDeadline(event.target.value)}
+              onChange={(event) =>
+                setNewDeadline(event.target.value)
+              }
             />
           </label>
 
           <div className="form-full-width">
-            <button type="submit" disabled={creatingTask}>
+            <button
+              type="submit"
+              disabled={creatingTask}
+            >
               {creatingTask ? 'Creating task...' : 'Create Task'}
             </button>
           </div>
         </form>
       </section>
 
+      {/* Task list */}
       <section className="task-panel">
         <div className="panel-heading">
           <div>
             <h2>Task list</h2>
             <p>Tasks retrieved from your account</p>
           </div>
-          <span className="task-count">{visibleTasks.length} tasks</span>
+
+          <span className="task-count">
+            {visibleTasks.length} tasks
+          </span>
         </div>
 
         <div className="task-controls">
@@ -594,9 +782,12 @@ function App() {
           <select
             aria-label="Filter tasks by status"
             value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
+            onChange={(event) =>
+              setStatusFilter(event.target.value)
+            }
           >
             <option value="All">All statuses</option>
+
             {TASK_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {status}
@@ -606,7 +797,10 @@ function App() {
 
           <button
             type="button"
-            onClick={() => loadTasks(token)}
+            onClick={() => {
+              loadTasks(token)
+              loadUsers(token)
+            }}
             disabled={loading}
           >
             {loading ? 'Refreshing...' : 'Refresh'}
@@ -617,124 +811,57 @@ function App() {
           <p className="empty-state">Loading tasks...</p>
         ) : visibleTasks.length > 0 ? (
           <div className="task-list">
-            {visibleTasks.map((task) => (
-              <article className="task-card" key={task.id}>
-                <div className="task-card-top">
-                  <div>
-                    <h3>{task.title}</h3>
-                    <p>{task.description || 'No description provided.'}</p>
-                  </div>
+            {visibleTasks.map((task) => {
+              const assignedUser = users.find(
+                (user) =>
+                  Number(user.id) === Number(task.assignee_id),
+              )
 
-                  <span
-                    className={`priority priority-${(
-                      task.priority || 'Medium'
-                    ).toLowerCase()}`}
-                  >
-                    {task.priority || 'Medium'}
-                  </span>
-                </div>
+              return (
+                <article
+                  className="task-card"
+                  key={task.id}
+                >
+                  <div className="task-card-top">
+                    <div>
+                      <h3>{task.title}</h3>
 
-                <div className="task-meta">
-                  <div className="status-control">
-                    <label htmlFor={`status-${task.id}`}>
-                      <strong>Status:</strong>
-                    </label>
-                    <select
-                      id={`status-${task.id}`}
-                      className="status-select"
-                      value={task.status}
-                      disabled={
-                        updatingTaskId === task.id ||
-                        editingTaskId === task.id ||
-                        deletingTaskId === task.id
-                      }
-                      onChange={(event) =>
-                        updateTaskStatus(task.id, event.target.value)
-                      }
+                      <p>
+                        {task.description ||
+                          'No description provided.'}
+                      </p>
+                    </div>
+
+                    <span
+                      className={`priority priority-${(
+                        task.priority || 'Medium'
+                      ).toLowerCase()}`}
                     >
-                      {TASK_STATUSES.map((status) => (
-                        <option key={status} value={status}>
-                          {status}
-                        </option>
-                      ))}
-                    </select>
-                    {updatingTaskId === task.id && <span>Updating...</span>}
+                      {task.priority || 'Medium'}
+                    </span>
                   </div>
 
-                  <span>
-                    <strong>Due:</strong>{' '}
-                    {task.deadline
-                      ? new Date(task.deadline).toLocaleString()
-                      : 'Not set'}
-                  </span>
+                  <div className="task-meta">
+                    <div className="status-control">
+                      <label htmlFor={`status-${task.id}`}>
+                        <strong>Status:</strong>
+                      </label>
 
-                  <span>
-                    <strong>Task ID:</strong> {task.id}
-                  </span>
-                </div>
-
-                {/* FR-05: Edit task form */}
-                {editingTaskId === task.id ? (
-                  <form
-                    className="create-task-form"
-                    onSubmit={saveEditedTask}
-                  >
-                    <h3 className="form-full-width">Edit Task</h3>
-
-                    <label>
-                      Task title *
-                      <input
-                        type="text"
-                        value={editTitle}
-                        onChange={(event) => setEditTitle(event.target.value)}
-                        maxLength={200}
-                        required
-                      />
-                    </label>
-
-                    <label>
-                      Priority
                       <select
-                        value={editPriority}
-                        onChange={(event) => setEditPriority(event.target.value)}
-                        required
-                      >
-                        {TASK_PRIORITIES.map((priority) => (
-                          <option key={priority} value={priority}>
-                            {priority}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="form-full-width">
-                      Description
-                      <textarea
-                        value={editDescription}
-                        onChange={(event) =>
-                          setEditDescription(event.target.value)
+                        id={`status-${task.id}`}
+                        className="status-select"
+                        value={task.status}
+                        disabled={
+                          updatingTaskId === task.id ||
+                          editingTaskId === task.id ||
+                          deletingTaskId === task.id
                         }
-                        placeholder="Describe your task (optional)"
-                      />
-                    </label>
-
-                    <label>
-                      Deadline (optional)
-                      <input
-                        type="datetime-local"
-                        value={editDeadline}
                         onChange={(event) =>
-                          setEditDeadline(event.target.value)
+                          updateTaskStatus(
+                            task.id,
+                            event.target.value,
+                          )
                         }
-                      />
-                    </label>
-
-                    <label>
-                      Status
-                      <select
-                        value={editStatus}
-                        onChange={(event) => setEditStatus(event.target.value)}
-                        required
                       >
                         {TASK_STATUSES.map((status) => (
                           <option key={status} value={status}>
@@ -742,53 +869,223 @@ function App() {
                           </option>
                         ))}
                       </select>
+
+                      {updatingTaskId === task.id && (
+                        <span>Updating...</span>
+                      )}
+                    </div>
+
+                    <span>
+                      <strong>Due:</strong>{' '}
+                      {task.deadline
+                        ? new Date(
+                            task.deadline,
+                          ).toLocaleString()
+                        : 'Not set'}
+                    </span>
+
+                    <span>
+                      <strong>Task ID:</strong> {task.id}
+                    </span>
+
+                    <span>
+                      <strong>Assigned to:</strong>{' '}
+                      {assignedUser?.email || 'Not assigned'}
+                    </span>
+                  </div>
+
+                  {/* FR-07: Assign task */}
+                  <div className="task-edit-actions">
+                    <label>
+                      Assign to
+
+                      <select
+                        aria-label={`Assign ${task.title} to a user`}
+                        value={
+                          selectedAssignees[task.id] ??
+                          String(task.assignee_id ?? '')
+                        }
+                        onChange={(event) =>
+                          setSelectedAssignees((current) => ({
+                            ...current,
+                            [task.id]: event.target.value,
+                          }))
+                        }
+                        disabled={
+                          assigningTaskId === task.id ||
+                          savingEdit ||
+                          updatingTaskId === task.id ||
+                          deletingTaskId === task.id
+                        }
+                      >
+                        <option value="">Select a user</option>
+
+                        {users.map((user) => (
+                          <option
+                            key={user.id}
+                            value={String(user.id)}
+                          >
+                            {user.email}
+                          </option>
+                        ))}
+                      </select>
                     </label>
 
-                    <div className="form-full-width task-edit-actions">
-                      <button type="submit" disabled={savingEdit}>
-                        {savingEdit ? 'Saving...' : 'Save Changes'}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="logout-button"
-                        onClick={cancelEditingTask}
-                        disabled={savingEdit}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  <div className="task-edit-actions">
                     <button
                       type="button"
-                      onClick={() => startEditingTask(task)}
+                      onClick={() => assignTask(task)}
                       disabled={
+                        assigningTaskId === task.id ||
+                        users.length === 0 ||
                         savingEdit ||
                         updatingTaskId === task.id ||
                         deletingTaskId === task.id
                       }
                     >
-                      Edit Task
-                    </button>
-
-                    <button
-                      type="button"
-                      className="delete-task-button"
-                      onClick={() => deleteTask(task)}
-                      disabled={
-                        deletingTaskId === task.id ||
-                        savingEdit ||
-                        updatingTaskId === task.id
-                      }
-                    >
-                      {deletingTaskId === task.id ? 'Deleting...' : 'Delete Task'}
+                      {assigningTaskId === task.id
+                        ? 'Assigning...'
+                        : 'Assign Task'}
                     </button>
                   </div>
-                )}
-              </article>
-            ))}
+
+                  {/* FR-05: Edit task form */}
+                  {editingTaskId === task.id ? (
+                    <form
+                      className="create-task-form"
+                      onSubmit={saveEditedTask}
+                    >
+                      <h3 className="form-full-width">
+                        Edit Task
+                      </h3>
+
+                      <label>
+                        Task title *
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={(event) =>
+                            setEditTitle(event.target.value)
+                          }
+                          maxLength={200}
+                          required
+                        />
+                      </label>
+
+                      <label>
+                        Priority
+                        <select
+                          value={editPriority}
+                          onChange={(event) =>
+                            setEditPriority(event.target.value)
+                          }
+                          required
+                        >
+                          {TASK_PRIORITIES.map((priority) => (
+                            <option
+                              key={priority}
+                              value={priority}
+                            >
+                              {priority}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="form-full-width">
+                        Description
+                        <textarea
+                          value={editDescription}
+                          onChange={(event) =>
+                            setEditDescription(event.target.value)
+                          }
+                          placeholder="Describe your task (optional)"
+                        />
+                      </label>
+
+                      <label>
+                        Deadline (optional)
+                        <input
+                          type="datetime-local"
+                          value={editDeadline}
+                          onChange={(event) =>
+                            setEditDeadline(event.target.value)
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        Status
+                        <select
+                          value={editStatus}
+                          onChange={(event) =>
+                            setEditStatus(event.target.value)
+                          }
+                          required
+                        >
+                          {TASK_STATUSES.map((status) => (
+                            <option
+                              key={status}
+                              value={status}
+                            >
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <div className="form-full-width task-edit-actions">
+                        <button
+                          type="submit"
+                          disabled={savingEdit}
+                        >
+                          {savingEdit
+                            ? 'Saving...'
+                            : 'Save Changes'}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="logout-button"
+                          onClick={cancelEditingTask}
+                          disabled={savingEdit}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="task-edit-actions">
+                      <button
+                        type="button"
+                        onClick={() => startEditingTask(task)}
+                        disabled={
+                          savingEdit ||
+                          updatingTaskId === task.id ||
+                          deletingTaskId === task.id
+                        }
+                      >
+                        Edit Task
+                      </button>
+
+                      <button
+                        type="button"
+                        className="delete-task-button"
+                        onClick={() => deleteTask(task)}
+                        disabled={
+                          deletingTaskId === task.id ||
+                          savingEdit ||
+                          updatingTaskId === task.id
+                        }
+                      >
+                        {deletingTaskId === task.id
+                          ? 'Deleting...'
+                          : 'Delete Task'}
+                      </button>
+                    </div>
+                  )}
+                </article>
+              )
+            })}
           </div>
         ) : (
           <p className="empty-state">
