@@ -26,6 +26,15 @@ function App() {
   const [creatingTask, setCreatingTask] = useState(false)
   const [updatingTaskId, setUpdatingTaskId] = useState(null)
 
+  // FR-05: Edit task state
+  const [editingTaskId, setEditingTaskId] = useState(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editPriority, setEditPriority] = useState('Medium')
+  const [editDeadline, setEditDeadline] = useState('')
+  const [editStatus, setEditStatus] = useState('Pending')
+  const [savingEdit, setSavingEdit] = useState(false)
+
   async function login(event) {
     event.preventDefault()
     setError('')
@@ -112,6 +121,7 @@ function App() {
           logout()
           throw new Error('Your session has expired. Please log in again.')
         }
+
         throw new Error(data.error || data.message || 'Could not load tasks.')
       }
 
@@ -168,6 +178,102 @@ function App() {
     }
   }
 
+  // FR-05: Open the edit form with the task's existing values
+  function startEditingTask(task) {
+    setError('')
+    setMessage('')
+    setEditingTaskId(task.id)
+    setEditTitle(task.title || '')
+    setEditDescription(task.description || '')
+    setEditPriority(task.priority || 'Medium')
+    setEditStatus(task.status || 'Pending')
+
+    if (task.deadline) {
+      const date = new Date(task.deadline)
+      const localDate = new Date(
+        date.getTime() - date.getTimezoneOffset() * 60000,
+      )
+      setEditDeadline(localDate.toISOString().slice(0, 16))
+    } else {
+      setEditDeadline('')
+    }
+  }
+
+  // FR-05: Save the edited task through the authenticated API
+  async function saveEditedTask(event) {
+    event.preventDefault()
+    setError('')
+    setMessage('')
+
+    if (!editTitle.trim()) {
+      setError('Task title is required.')
+      return
+    }
+
+    if (editTitle.trim().length > 200) {
+      setError('Task title cannot exceed 200 characters.')
+      return
+    }
+
+    if (!TASK_PRIORITIES.includes(editPriority)) {
+      setError('Please select a valid priority.')
+      return
+    }
+
+    if (!TASK_STATUSES.includes(editStatus)) {
+      setError('Please select a valid status.')
+      return
+    }
+
+    setSavingEdit(true)
+
+    try {
+      const response = await fetch(`${API}/tasks/${editingTaskId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          description: editDescription.trim(),
+          priority: editPriority,
+          deadline: editDeadline
+            ? new Date(editDeadline).toISOString()
+            : null,
+          status: editStatus,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || data.message || 'Could not update task.',
+        )
+      }
+
+      setEditingTaskId(null)
+      setMessage(data.message || 'Task updated successfully!')
+      await loadTasks(token)
+    } catch (err) {
+      setError(err.message || 'Could not update task.')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  function cancelEditingTask() {
+    setEditingTaskId(null)
+    setEditTitle('')
+    setEditDescription('')
+    setEditPriority('Medium')
+    setEditDeadline('')
+    setEditStatus('Pending')
+    setError('')
+    setMessage('')
+  }
+
   async function updateTaskStatus(taskId, status) {
     setError('')
     setMessage('')
@@ -208,6 +314,7 @@ function App() {
     setError('')
     setSearch('')
     setStatusFilter('All')
+    cancelEditingTask()
   }
 
   useEffect(() => {
@@ -490,7 +597,10 @@ function App() {
                       id={`status-${task.id}`}
                       className="status-select"
                       value={task.status}
-                      disabled={updatingTaskId === task.id}
+                      disabled={
+                        updatingTaskId === task.id ||
+                        editingTaskId === task.id
+                      }
                       onChange={(event) =>
                         updateTaskStatus(task.id, event.target.value)
                       }
@@ -501,9 +611,7 @@ function App() {
                         </option>
                       ))}
                     </select>
-                    {updatingTaskId === task.id && (
-                      <span>Updating...</span>
-                    )}
+                    {updatingTaskId === task.id && <span>Updating...</span>}
                   </div>
 
                   <span>
@@ -517,6 +625,104 @@ function App() {
                     <strong>Task ID:</strong> {task.id}
                   </span>
                 </div>
+
+                {/* FR-05: Edit task form */}
+                {editingTaskId === task.id ? (
+                  <form
+                    className="create-task-form"
+                    onSubmit={saveEditedTask}
+                  >
+                    <h3 className="form-full-width">Edit Task</h3>
+
+                    <label>
+                      Task title *
+                      <input
+                        type="text"
+                        value={editTitle}
+                        onChange={(event) => setEditTitle(event.target.value)}
+                        maxLength={200}
+                        required
+                      />
+                    </label>
+
+                    <label>
+                      Priority
+                      <select
+                        value={editPriority}
+                        onChange={(event) => setEditPriority(event.target.value)}
+                        required
+                      >
+                        {TASK_PRIORITIES.map((priority) => (
+                          <option key={priority} value={priority}>
+                            {priority}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="form-full-width">
+                      Description
+                      <textarea
+                        value={editDescription}
+                        onChange={(event) =>
+                          setEditDescription(event.target.value)
+                        }
+                        placeholder="Describe your task (optional)"
+                      />
+                    </label>
+
+                    <label>
+                      Deadline (optional)
+                      <input
+                        type="datetime-local"
+                        value={editDeadline}
+                        onChange={(event) =>
+                          setEditDeadline(event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Status
+                      <select
+                        value={editStatus}
+                        onChange={(event) => setEditStatus(event.target.value)}
+                        required
+                      >
+                        {TASK_STATUSES.map((status) => (
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="form-full-width task-edit-actions">
+                      <button type="submit" disabled={savingEdit}>
+                        {savingEdit ? 'Saving...' : 'Save Changes'}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="logout-button"
+                        onClick={cancelEditingTask}
+                        disabled={savingEdit}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="task-edit-actions">
+                    <button
+                      type="button"
+                      onClick={() => startEditingTask(task)}
+                      disabled={savingEdit || updatingTaskId === task.id}
+                    >
+                      Edit Task
+                    </button>
+                  </div>
+                )}
               </article>
             ))}
           </div>
