@@ -1,13 +1,27 @@
+
 import { Router } from 'express';
 import pool from '../db.js';
 import authenticateToken from '../middleware/auth.js';
 
 const router = Router();
 
-// All task routes require a valid login
+// All task routes require a valid login.
 router.use(authenticateToken);
 
-// Create a task
+// Check whether the logged-in user owns or is assigned to a task.
+async function canAccessTask(taskId, userId) {
+  const result = await pool.query(
+    `SELECT id
+     FROM tasks
+     WHERE id = $1
+       AND (user_id = $2 OR assignee_id = $2)`,
+    [taskId, userId]
+  );
+
+  return result.rows.length > 0;
+}
+
+// Create a task. The creator becomes its owner.
 router.post('/', async (req, res) => {
   try {
     const {
@@ -53,11 +67,32 @@ router.post('/', async (req, res) => {
   }
 });
 
-// List only the logged-in user's tasks
+// List registered users for task assignment.
+router.get('/users', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, email FROM users ORDER BY email ASC'
+    );
+
+    return res.json({ users: result.rows });
+  } catch (error) {
+    console.error('Fetch users error:', error.message);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// List tasks owned by or assigned to the logged-in user.
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM tasks WHERE user_id = $1 ORDER BY created_at DESC',
+      `SELECT t.*,
+              owner.email AS owner_email,
+              assignee.email AS assignee_email
+       FROM tasks t
+       JOIN users owner ON owner.id = t.user_id
+       LEFT JOIN users assignee ON assignee.id = t.assignee_id
+       WHERE t.user_id = $1 OR t.assignee_id = $1
+       ORDER BY t.created_at DESC`,
       [req.user.id]
     );
 
@@ -68,7 +103,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Edit a task's details (FR-05)
+// Edit task details. The owner or assignee may edit.
 router.put('/:id', async (req, res) => {
   try {
     const taskId = Number(req.params.id);
@@ -80,12 +115,10 @@ router.put('/:id', async (req, res) => {
       status,
     } = req.body;
 
-    // Validate task ID
     if (!Number.isInteger(taskId) || taskId < 1) {
       return res.status(400).json({ error: 'Invalid task ID.' });
     }
 
-    // Validate updated task information
     if (
       typeof title !== 'string' ||
       !title.trim() ||
@@ -100,7 +133,6 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid task input.' });
     }
 
-    // Update only a task belonging to the logged-in user
     const result = await pool.query(
       `UPDATE tasks
        SET title = $1,
@@ -109,7 +141,8 @@ router.put('/:id', async (req, res) => {
            deadline = $4,
            status = $5,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $6 AND user_id = $7
+       WHERE id = $6
+         AND (user_id = $7 OR assignee_id = $7)
        RETURNING *`,
       [
         title.trim(),
@@ -123,7 +156,7 @@ router.put('/:id', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Task not found.' });
+      return res.status(404).json({ error: 'Task not found or access denied.' });
     }
 
     return res.json({
@@ -136,11 +169,11 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Update a task's status (existing route)
+// Update status. The owner or assignee may update it.
 router.put('/:id/status', async (req, res) => {
   try {
-    const { status } = req.body;
     const taskId = Number(req.params.id);
+    const { status } = req.body;
 
     if (!Number.isInteger(taskId) || taskId < 1) {
       return res.status(400).json({ error: 'Invalid task ID.' });
@@ -152,14 +185,16 @@ router.put('/:id/status', async (req, res) => {
 
     const result = await pool.query(
       `UPDATE tasks
-       SET status = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2 AND user_id = $3
+       SET status = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+         AND (user_id = $3 OR assignee_id = $3)
        RETURNING *`,
       [status, taskId, req.user.id]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Task not found.' });
+      return res.status(404).json({ error: 'Task not found or access denied.' });
     }
 
     return res.json({
@@ -172,26 +207,25 @@ router.put('/:id/status', async (req, res) => {
   }
 });
 
-// Delete a task (FR-06)
+// Delete task. The owner or assignee may delete it.
 router.delete('/:id', async (req, res) => {
   try {
     const taskId = Number(req.params.id);
 
-    // Validate task ID
     if (!Number.isInteger(taskId) || taskId < 1) {
       return res.status(400).json({ error: 'Invalid task ID.' });
     }
 
-    // Delete only a task belonging to the logged-in user
     const result = await pool.query(
       `DELETE FROM tasks
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $1
+         AND (user_id = $2 OR assignee_id = $2)
        RETURNING id`,
       [taskId, req.user.id]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Task not found.' });
+      return res.status(404).json({ error: 'Task not found or access denied.' });
     }
 
     return res.json({
@@ -200,6 +234,59 @@ router.delete('/:id', async (req, res) => {
     });
   } catch (error) {
     console.error('Delete task error:', error.message);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// Assign a task to a registered user. Only the owner can reassign it.
+router.put('/:id/assign', async (req, res) => {
+  try {
+    const taskId = Number(req.params.id);
+    const { assigneeId } = req.body;
+
+    if (!Number.isInteger(taskId) || taskId < 1) {
+      return res.status(400).json({ error: 'Invalid task ID.' });
+    }
+
+    if (!Number.isInteger(assigneeId) || assigneeId < 1) {
+      return res.status(400).json({ error: 'Invalid assignee ID.' });
+    }
+
+    const userResult = await pool.query(
+      'SELECT id, email FROM users WHERE id = $1',
+      [assigneeId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({
+        error: 'Selected assignee does not exist.',
+      });
+    }
+
+    const taskResult = await pool.query(
+      `UPDATE tasks
+       SET assignee_id = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND user_id = $3
+       RETURNING *`,
+      [assigneeId, taskId, req.user.id]
+    );
+
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Task not found or only the owner can assign it.',
+      });
+    }
+
+    return res.json({
+      message: 'Task assigned successfully.',
+      task: {
+        ...taskResult.rows[0],
+        assignee_email: userResult.rows[0].email,
+      },
+    });
+  } catch (error) {
+    console.error('Assign task error:', error.message);
     return res.status(500).json({ error: 'Internal server error.' });
   }
 });
