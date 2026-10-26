@@ -35,6 +35,9 @@ function App() {
   const [editStatus, setEditStatus] = useState('Pending')
   const [savingEdit, setSavingEdit] = useState(false)
 
+  // FR-06: Delete task state
+  const [deletingTaskId, setDeletingTaskId] = useState(null)
+
   async function login(event) {
     event.preventDefault()
     setError('')
@@ -274,6 +277,49 @@ function App() {
     setMessage('')
   }
 
+  // FR-06: Delete a task after confirmation
+  async function deleteTask(task) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${task.title}"? This action cannot be undone.`,
+    )
+
+    if (!confirmed) return
+
+    setError('')
+    setMessage('')
+    setDeletingTaskId(task.id)
+
+    try {
+      const response = await fetch(`${API}/tasks/${task.id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || data.message || 'Could not delete task.')
+      }
+
+      if (editingTaskId === task.id) {
+        cancelEditingTask()
+      }
+
+      setTasks((currentTasks) =>
+        currentTasks.filter((currentTask) => currentTask.id !== task.id),
+      )
+
+      setMessage(data.message || 'Task deleted successfully.')
+    } catch (err) {
+      setError(err.message || 'Could not delete task.')
+    } finally {
+      setDeletingTaskId(null)
+    }
+  }
+
+  // Update a task's status
   async function updateTaskStatus(taskId, status) {
     setError('')
     setMessage('')
@@ -599,7 +645,8 @@ function App() {
                       value={task.status}
                       disabled={
                         updatingTaskId === task.id ||
-                        editingTaskId === task.id
+                        editingTaskId === task.id ||
+                        deletingTaskId === task.id
                       }
                       onChange={(event) =>
                         updateTaskStatus(task.id, event.target.value)
@@ -717,9 +764,26 @@ function App() {
                     <button
                       type="button"
                       onClick={() => startEditingTask(task)}
-                      disabled={savingEdit || updatingTaskId === task.id}
+                      disabled={
+                        savingEdit ||
+                        updatingTaskId === task.id ||
+                        deletingTaskId === task.id
+                      }
                     >
                       Edit Task
+                    </button>
+
+                    <button
+                      type="button"
+                      className="delete-task-button"
+                      onClick={() => deleteTask(task)}
+                      disabled={
+                        deletingTaskId === task.id ||
+                        savingEdit ||
+                        updatingTaskId === task.id
+                      }
+                    >
+                      {deletingTaskId === task.id ? 'Deleting...' : 'Delete Task'}
                     </button>
                   </div>
                 )}
