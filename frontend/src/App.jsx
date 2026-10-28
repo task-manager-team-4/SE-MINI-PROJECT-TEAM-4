@@ -489,13 +489,60 @@ function App() {
   }
 
   useEffect(() => {
-    if (token) {
-      loadTasks(token)
-      loadUsers(token)
+    if (!token) return
+
+    const controller = new AbortController()
+
+    async function fetchInitialData() {
+      try {
+        const [tasksResponse, usersResponse] = await Promise.all([
+          fetch(`${API}/tasks`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          }),
+          fetch(`${API}/tasks/users`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          }),
+        ])
+
+        const tasksData = await tasksResponse.json()
+        const usersData = await usersResponse.json()
+
+        if (!tasksResponse.ok || !usersResponse.ok) {
+          if (
+            tasksResponse.status === 401 ||
+            tasksResponse.status === 403 ||
+            usersResponse.status === 401 ||
+            usersResponse.status === 403
+          ) {
+            localStorage.removeItem('taskToken')
+            setToken('')
+            setTasks([])
+            setUsers([])
+            throw new Error('Your session has expired. Please log in again.')
+          }
+
+          throw new Error(
+            tasksData.error ||
+              usersData.error ||
+              'Could not load initial data.',
+          )
+        }
+
+        setTasks(Array.isArray(tasksData.tasks) ? tasksData.tasks : [])
+        setUsers(Array.isArray(usersData.users) ? usersData.users : [])
+        setError('')
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          setError(err.message || 'Could not load initial data.')
+        }
+      }
     }
 
-    // loadTasks is intentionally called when the authentication token changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchInitialData()
+
+    return () => controller.abort()
   }, [token])
 
   // Search and filter tasks
