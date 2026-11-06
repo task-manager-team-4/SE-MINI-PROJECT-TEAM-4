@@ -156,7 +156,9 @@ router.put('/:id', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Task not found or access denied.' });
+      return res.status(404).json({
+        error: 'Task not found or access denied.',
+      });
     }
 
     return res.json({
@@ -194,7 +196,9 @@ router.put('/:id/status', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Task not found or access denied.' });
+      return res.status(404).json({
+        error: 'Task not found or access denied.',
+      });
     }
 
     return res.json({
@@ -225,7 +229,9 @@ router.delete('/:id', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Task not found or access denied.' });
+      return res.status(404).json({
+        error: 'Task not found or access denied.',
+      });
     }
 
     return res.json({
@@ -238,20 +244,30 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// Assign a task to a registered user. Only the owner can reassign it.
+// FR-07: Assign a task to a registered user.
+// Only the task owner can assign or reassign it.
 router.put('/:id/assign', async (req, res) => {
   try {
     const taskId = Number(req.params.id);
-    const { assigneeId } = req.body;
+
+    // Accept both assignee_id and assigneeId.
+    const assigneeId = Number(
+      req.body.assignee_id ?? req.body.assigneeId
+    );
 
     if (!Number.isInteger(taskId) || taskId < 1) {
-      return res.status(400).json({ error: 'Invalid task ID.' });
+      return res.status(400).json({
+        error: 'Invalid task ID.',
+      });
     }
 
     if (!Number.isInteger(assigneeId) || assigneeId < 1) {
-      return res.status(400).json({ error: 'Invalid assignee ID.' });
+      return res.status(400).json({
+        error: 'Invalid assignee ID.',
+      });
     }
 
+    // Verify that the selected user exists.
     const userResult = await pool.query(
       'SELECT id, email FROM users WHERE id = $1',
       [assigneeId]
@@ -263,11 +279,13 @@ router.put('/:id/assign', async (req, res) => {
       });
     }
 
+    // Only the owner can assign the task.
     const taskResult = await pool.query(
       `UPDATE tasks
        SET assignee_id = $1,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2 AND user_id = $3
+       WHERE id = $2
+         AND user_id = $3
        RETURNING *`,
       [assigneeId, taskId, req.user.id]
     );
@@ -286,8 +304,11 @@ router.put('/:id/assign', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Assign task error:', error.message);
-    return res.status(500).json({ error: 'Internal server error.' });
+    console.error('Assign task error:', error);
+
+    return res.status(500).json({
+      error: 'Internal server error.',
+    });
   }
 });
 
