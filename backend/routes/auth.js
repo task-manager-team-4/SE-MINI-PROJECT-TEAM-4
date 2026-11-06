@@ -27,6 +27,7 @@ router.post('/register', async (req, res) => {
     const normalizedEmail = email.trim().toLowerCase();
     const passwordHash = await bcrypt.hash(password, 12);
 
+    // Create user in PostgreSQL
     const result = await pool.query(
       `INSERT INTO users (email, password_hash)
        VALUES ($1, $2)
@@ -34,10 +35,25 @@ router.post('/register', async (req, res) => {
       [normalizedEmail, passwordHash]
     );
 
+    const user = result.rows[0];
+
+    // Generate JWT token immediately after registration
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    // Return token and user details to frontend
     return res.status(201).json({
       message: 'Registration successful.',
-      user: result.rows[0],
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+      },
     });
+
   } catch (error) {
     if (error.code === '23505') {
       return res.status(409).json({
@@ -46,14 +62,14 @@ router.post('/register', async (req, res) => {
     }
 
     console.error('Registration error:', error.message);
+
     return res.status(500).json({
       error: 'Internal server error.',
     });
   }
 });
 
-
-/* Login an existing user */
+// Login an existing user
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -111,13 +127,14 @@ router.post('/login', async (req, res) => {
         email: user.email,
       },
     });
+
   } catch (error) {
     console.error('Login error:', error.message);
+
     return res.status(500).json({
       error: 'Internal server error.',
     });
   }
 });
-
 
 export default router;
