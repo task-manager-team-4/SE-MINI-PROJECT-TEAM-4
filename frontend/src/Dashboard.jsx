@@ -1,6 +1,4 @@
 
-import React from 'react';
-
 function Dashboard({ tasks = [] }) {
   const totalTasks = tasks.length;
 
